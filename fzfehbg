@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# MADE BY twix (https://github.com/Twix53791)
+# FROM a script of Nico Bäurer
+# https://github.com/seebye/ueberzug/blob/master/examples/fzfimg.sh
+#
+# DEPENDENCIES:
+#		ueberzug		(https://github.com/seebye/ueberzug)
+#		fzf			(https://github.com/junegunn/fzf)
+#		feh			(https://github.com/derf/feh)
+# Optionnal:
+#		fd				(https://github.com/sharkdp/fd)
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+# Directory where to search for wallpapers
+WP_PATH=$HOME/.config/bspwm/wallpapers/
+
+# To activate the function 'explore home directory', add in the
+#  wallpapers path an empty file named ':explore home directory'
+# !!! Warning: it is now buggy: the ueberzug preview does not
+# 		work when you change of directory, for a reason unknown...
+# 		It is still possible to select files, but not preview them
+#
+# It is possible to pass options to fzf with FZF_OPTIONS:
+#FZF_OPTIONS=(--color='bg:237,bg+:236,info:143,border:240,spinner:108' \
+#					--margin 2% --padding 2% \
+#					--bind 'ctrl-a:select-all+accept')
+
+#:::::::::::: UEBERZUG IMAGE PREVIEW ::::::::::::::::::::::::::::::
+
+declare -r -x UEBERZUG_FIFO="$(mktemp --dry-run --suffix "fzf-$$-ueberzug")"
+declare -r -x PREVIEW_ID="preview"
+
+function start_ueberzug {
+    mkfifo "${UEBERZUG_FIFO}"
+    <"${UEBERZUG_FIFO}" \
+        ueberzug layer --parser bash --silent &
+    # prevent EOF
+    3>"${UEBERZUG_FIFO}" \
+        exec
+}
+
+function calculate_position {
+    < <(</dev/tty stty size) \
+        read TERMINAL_LINES TERMINAL_COLUMNS
+   X=$((TERMINAL_COLUMNS - COLUMNS - 2))
+   Y=1
+}
+
+function draw_preview {
+    calculate_position
+
+    >"${UEBERZUG_FIFO}" declare -A -p cmd=( \
+        [action]=add [identifier]="${PREVIEW_ID}" \
+        [x]="${X}" [y]="${Y}" \
+        [width]="${COLUMNS}" [height]="15" \
+        [scaler]=forced_cover [scaling_position_x]=0.5 [scaling_position_y]=0.5 \
+        [path]="${@}")
+}
+
+function finalise {
+    3>&- \
+        exec
+    &>/dev/null \
+        rm "${UEBERZUG_FIFO}"
+    &>/dev/null \
+        kill $(jobs -p)
+}
+
+#::::::::::::::::::: FZF MENUS  :::::::::::::::::::::::::::::::::::
+
+_search_for_dir (){
+	dir=$(find ~ -type d 2>/dev/null | grep -i wallpapers | tail -1)
+}
+
+_wallpapers_path (){
+	if [[ -n $WP_PATH ]]; then
+		export WP_DEFAULT_PATH="$WP_PATH"
+	else
+		[[ -f $HOME/.fzfehbg_wallpapers_path ]] &&
+			savedpath=$(< $HOME/.fzfehbg_wallpapers_path)
+		if [[ -s $savedpath ]]; then
+			export WP_DEFAULT_PATH="$savedpath"
+		else
+			_search_for_dir
+			wait
+			export WP_DEFAULT_PATH="${dir}/"
+			touch "$dir/:hide wallpaper" \
+					"$dir/:set a permanent wallpaper" \
+					"$dir/:set random boot wallpapers" \
+					"$dir/:show hidden wallpapers"
+			echo "${dir}/" > $HOME/.fzfehbg_wallpapers_path
+		fi
+	fi
+}
+
+_main_menu (){
+
+		((init==1)) && init=0 && start_ueberzug
+
+	   export -f draw_preview calculate_position
+		[[ $1 != frompath ]] && _path="$WP_DEFAULT_PATH" ||
+			_path="$2"
+
+	# Use `fd` if present, to have a beautiful colourful output
+	#  If not, use `find`
+		if command -v fd &>/dev/null; then
+			cmd1=(fd -E '_*' -E ':*' \
+					--color=always --base-directory "$_path")
+			cmd2=(fd --glob ':*' \
+					--color=always --base-directory "$_path")
+			cmd3=(fd --glob '_*' \
+					--color=always --base-directory "$_path")
+			cmd4=(fd --color=always -t d \
+					--base-directory "$HOME")
+			filter=(sed 's|./||')
+		else
+			_find=1
+			cmd1=(find "$_path" -type f \( \
+					! -iname '_*' ! -iname ':*' ! -iname '.*' \) \
+					-printf '%f\n')
+			cmd2=(find "$_path" -type f \( \
+					-iname ':*' \) \
+					-printf '%f\n')
+			cmd3=(find "$_path" -type f \( \
+					-iname '_*' \) \
+					-printf '%f\n')
+			cmd4=(find "$HOME" -type d)
+			filter=(sed 's|./||')
+		fi
+
+	# Menus specific commands
+		[[ $1 == show ]] && cmd1=(${cmd3[@]}) && cmd2=()
+		[[ $1 == hide ]] && cmd2=()
+		[[ $1 == home ]] && cmd1=(${cmd4[@]}) && cmd2=()
+		[[ $1 == home ]] && ((_find==1)) && filter=(sed "s|$HOME\/||")
+
+
+
+	# Fzf menu
+	   	  output=$(cat <( "${cmd1[@]}" 2>/dev/null && "${cmd2[@]}" 2>/dev/null) | \
+				"${filter[@]}" |
+	     		fzf --preview "draw_preview ${_path}{}" \
+	         --preview-window '60%:noborder' \
+	         "${mselect[@]}" \
+	         "${FZF_OPTIONS[@]}")
+
+	mselect=()
+	rm "${UEBERZUG_FIFO}"
+
+	if [[ -z $output && -z $1 ]]; then
+		exit
+	elif [[ -n $1 ]] && [[ $1 != frompath ]]; then
+		return
+	else
+		_action
+	fi
+}
+
+_set_wallpaper (){
+   feh --no-fehbg --bg-center "$1"
+}
+
+_set_permanent_wallpaper (){
+	_main_menu hide
+
+	[[ -n $output ]] &&
+		echo "$_path$output" > "$_path/.permanent_wallpaper" ||
+		notify-send "No file selected" "Operation Cancelled"
+
+	_main_menu
+}
+
+_set_random_wallpapers (){
+	notify-send "Boot randomization actived"
+	echo '' > "$_path/.permanent_wallpaper"
+	_main_menu
+}
+
+_show_hidden_wallpapers (){
+	mselect=(-m)
+	_main_menu show
+
+	# Transform output unto an array
+	mapfile -t output < <( echo "$output")
+
+	if [[ -n $output ]]; then
+		for file in "${output[@]}"; do
+			mv "$_path$file" "$_path${file#?}"
+		done
+	else
+		notify-send "No file selected" "Operation Cancelled"
+	fi
+
+	_main_menu
+}
+
+_hide_wallpaper (){
+	mselect=(-m)
+	_main_menu hide
+
+	# Transform output unto an array
+	mapfile -t output < <( echo "$output")
+
+	if [[ -n $output ]]; then
+		for file in "${output[@]}"; do
+			mv "$_path$file" "${_path}_${file}"
+		done
+	else
+		notify-send "No file selected" "Operation Cancelled"
+	fi
+
+	_main_menu
+}
+
+_explore_home (){
+	_main_menu home
+	_main_menu frompath "${HOME}/$output/"
+}
+
+_action (){
+	if [[ ${output:0:1} == : ]]; then
+		if [[ $output == *"set a permanent"* ]]; then
+			_set_permanent_wallpaper
+		elif [[ $output == *"random boot wall"* ]]; then
+			_set_random_wallpapers
+		elif [[ $output == *"show hidden wall"* ]]; then
+			_show_hidden_wallpapers
+		elif [[ $output == *"hide wall"* ]]; then
+			_hide_wallpaper
+		elif [[ $output == *"xplore home directory"* ]]; then
+			_explore_home
+		fi
+	else
+		file="${_path}/$output"
+		[[ -f "$file" ]] &&
+			_set_wallpaper "$file"
+	fi
+}
+
+#::::::::::::::::::::: SCRIPT :::::::::::::::::::::::::::::::::::::
+
+trap finalise EXIT
+
+init=1
+_wallpapers_path
+_main_menu
