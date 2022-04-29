@@ -15,12 +15,6 @@
 # Directory where to search for wallpapers
 WP_PATH=$HOME/.config/bspwm/wallpapers/
 
-# To activate the function 'explore home directory', add in the
-#  wallpapers path an empty file named ':explore home directory'
-# !!! Warning: it is now buggy: the ueberzug preview does not
-# 		work when you change of directory, for a reason unknown...
-# 		It is still possible to select files, but not preview them
-#
 # It is possible to pass options to fzf with FZF_OPTIONS:
 #FZF_OPTIONS=(--color='bg:237,bg+:236,info:143,border:240,spinner:108' \
 #					--margin 2% --padding 2% \
@@ -89,6 +83,7 @@ _wallpapers_path (){
 					"$dir/:set a permanent wallpaper" \
 					"$dir/:set random boot wallpapers" \
 					"$dir/:show hidden wallpapers"
+					"$dir/:explore home directory"
 			echo "${dir}/" > $HOME/.fzfehbg_wallpapers_path
 		fi
 	fi
@@ -146,7 +141,6 @@ _main_menu (){
 	         "${FZF_OPTIONS[@]}")
 
 	mselect=()
-	rm "${UEBERZUG_FIFO}"
 
 	if [[ -z $output && -z $1 ]]; then
 		exit
