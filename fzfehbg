@@ -1,196 +1,173 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # MADE BY twix (https://github.com/Twix53791)
-# FROM a script of Nico Bäurer
-# https://github.com/seebye/ueberzug/blob/master/examples/fzfimg.sh
+#
+# A small command line interface to manage wallpapers.
 #
 # DEPENDENCIES:
-#		ueberzug		(https://github.com/seebye/ueberzug)
 #		fzf			(https://github.com/junegunn/fzf)
 #		feh			(https://github.com/derf/feh)
+#     timg        (https://github.com/hzeller/timg)
+#     libnotify   (for desktop notifications)
 # Optionnal:
 #		fd				(https://github.com/sharkdp/fd)
+#
+# Note: timg can be replaced by almost any terminal image viewer.
 #::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
+### CONFIG ###
+
 # Directory where to search for wallpapers
-WP_PATH=$HOME/.config/bspwm/wallpapers/
+WP_DIR=$HOME/.config/bspwm/wallpapers
 
 # It is possible to pass options to fzf with FZF_OPTIONS:
 #FZF_OPTIONS=(--color='bg:237,bg+:236,info:143,border:240,spinner:108' \
 #					--margin 2% --padding 2% \
 #					--bind 'ctrl-a:select-all+accept')
 
-#:::::::::::: UEBERZUG IMAGE PREVIEW ::::::::::::::::::::::::::::::
+### FUNCTIONS ###
 
-declare -r -x UEBERZUG_FIFO="$(mktemp --dry-run --suffix "fzf-$$-ueberzug")"
-declare -r -x PREVIEW_ID="preview"
+_chk_wp_dir (){
+   [[ ${WP_DIR: -1} != "/" ]] && WP_DIR="${WP_DIR}/"
 
-function start_ueberzug {
-    mkfifo "${UEBERZUG_FIFO}"
-    <"${UEBERZUG_FIFO}" \
-        ueberzug layer --parser bash --silent &
-    # prevent EOF
-    3>"${UEBERZUG_FIFO}" \
-        exec
-}
-
-function calculate_position {
-    < <(</dev/tty stty size) \
-        read TERMINAL_LINES TERMINAL_COLUMNS
-   X=$((TERMINAL_COLUMNS - COLUMNS - 2))
-   Y=1
-}
-
-function draw_preview {
-    calculate_position
-
-    >"${UEBERZUG_FIFO}" declare -A -p cmd=( \
-        [action]=add [identifier]="${PREVIEW_ID}" \
-        [x]="${X}" [y]="${Y}" \
-        [width]="${COLUMNS}" [height]="15" \
-        [scaler]=forced_cover [scaling_position_x]=0.5 [scaling_position_y]=0.5 \
-        [path]="${@}")
-}
-
-function finalise {
-    3>&- \
-        exec
-    &>/dev/null \
-        rm "${UEBERZUG_FIFO}"
-    &>/dev/null \
-        kill $(jobs -p)
-}
-
-#::::::::::::::::::: FZF MENUS  :::::::::::::::::::::::::::::::::::
-
-_search_for_dir (){
-	dir=$(find ~ -type d 2>/dev/null | grep -i wallpapers | tail -1)
-}
-
-_wallpapers_path (){
-	if [[ -n $WP_PATH ]]; then
-		export WP_DEFAULT_PATH="$WP_PATH"
-	else
-		[[ -f $HOME/.fzfehbg_wallpapers_path ]] &&
-			savedpath=$(< $HOME/.fzfehbg_wallpapers_path)
-		if [[ -s $savedpath ]]; then
-			export WP_DEFAULT_PATH="$savedpath"
-		else
-			_search_for_dir
-			wait
-			export WP_DEFAULT_PATH="${dir}/"
-			touch "$dir/:hide wallpaper" \
-					"$dir/:set a permanent wallpaper" \
-					"$dir/:set random boot wallpapers" \
-					"$dir/:show hidden wallpapers"
-					"$dir/:explore home directory"
-			echo "${dir}/" > $HOME/.fzfehbg_wallpapers_path
-		fi
-	fi
+   if [[ ! -d $WP_DIR ]]; then
+      notify-send "fehbg-mini error" "Wallpapers directory not found."
+      exit
+   else
+      [[ $1 == "-R" ]] && rm -r "${WP_DIR}/:options"
+      [[ ! -d "${WP_DIR}/:options" ]] && mkdir "${WP_DIR}/:options"
+      [[ ! -f "${WP_DIR}/:options/-- set a permanent wallpaper" ]] &&
+              touch "${WP_DIR}/:options/-- set a permanent wallpaper"
+      [[ ! -f "${WP_DIR}/:options/-- set random boot wallpapers" ]] &&
+              touch "${WP_DIR}/:options//-- set random boot wallpapers"
+      [[ ! -f "${WP_DIR}/:options/-- hide wallpapers" ]] &&
+              touch "${WP_DIR}/:options/-- hide wallpapers"
+      [[ ! -f "${WP_DIR}/:options/-- explore home directory" ]] &&
+              touch "${WP_DIR}/:options/-- explore home directory"
+   fi
 }
 
 _main_menu (){
 
-		((init==1)) && init=0 && start_ueberzug
-
-	   export -f draw_preview calculate_position
-		[[ $1 != frompath ]] && _path="$WP_DEFAULT_PATH" ||
-			_path="$2"
+   # Set the directory in which fd/find searches
+      if [[ $1 == options ]]; then
+         DIR=${WP_DIR}:options/
+      elif [[ $1 == fromdir ]]; then
+         DIR="$2"
+      else
+         DIR=$WP_DIR
+      fi
 
 	# Use `fd` if present, to have a beautiful colourful output
 	#  If not, use `find`
 		if command -v fd &>/dev/null; then
-			cmd1=(fd -E '_*' -E ':*' \
-					--color=always --base-directory "$_path")
-			cmd2=(fd --glob ':*' \
-					--color=always --base-directory "$_path")
-			cmd3=(fd --glob '_*' \
-					--color=always --base-directory "$_path")
-			cmd4=(fd --color=always -t d \
-					--base-directory "$HOME")
-			filter=(sed 's|./||')
+		   _find=0
+			cmd1=(fd -E '_*' -d 1 --path-separator '' \
+					--color=always --base-directory "$DIR")
+			cmd2=(fd --glob '_*' -d 1 \
+					--color=always --base-directory "$DIR")
+			cmd3=(fd -t f -E '_*' -d 1 \
+			      --color=always --base-directory "$DIR")
+			cmd4=(fd -t d \
+					--color=always --base-directory "$HOME")
 		else
-			_find=1
-			cmd1=(find "$_path" -type f \( \
-					! -iname '_*' ! -iname ':*' ! -iname '.*' \) \
+		   _find=1
+			cmd1=(find "$DIR" -maxdepth 1 -mindepth 1 \( \
+					! -iname '_*' ! -iname '.*' \) \
 					-printf '%f\n')
-			cmd2=(find "$_path" -type f \( \
-					-iname ':*' \) \
-					-printf '%f\n')
-			cmd3=(find "$_path" -type f \( \
+			cmd2=(find "$DIR" -maxdepth 1 -mindepth 1 \( \
 					-iname '_*' \) \
 					-printf '%f\n')
-			cmd4=(find "$HOME" -type d)
-			filter=(sed 's|./||')
+			cmd3=(find "$DIR" -type f -maxdepth 1 -mindepth 1 \( \
+					! -iname '_*' ! -iname '.*' \) \
+					-printf '%f\n')
+			cmd4=(find "$HOME" -type d -mindepth 1)
 		fi
 
 	# Menus specific commands
-		[[ $1 == show ]] && cmd1=(${cmd3[@]}) && cmd2=()
-		[[ $1 == hide ]] && cmd2=()
-		[[ $1 == home ]] && cmd1=(${cmd4[@]}) && cmd2=()
-		[[ $1 == home ]] && ((_find==1)) && filter=(sed "s|$HOME\/||")
-
-
+  		if [[ $1 == hide ]]; then
+  		   mselect=(-m)
+		elif [[ $1 == perm ]]; then
+		   cmd1=("${cmd3[@]}") && cmd2=()
+		elif [[ $1 == home ]]; then
+		   cmd1=("${cmd4[@]}") && cmd2=()
+      elif command -v fd &>/dev/null; then
+         cmd2=()
+      fi
 
 	# Fzf menu
-	   	  output=$(cat <( "${cmd1[@]}" 2>/dev/null && "${cmd2[@]}" 2>/dev/null) | \
-				"${filter[@]}" |
-	     		fzf --preview "draw_preview ${_path}{}" \
-	         --preview-window '60%:noborder' \
-	         "${mselect[@]}" \
-	         "${FZF_OPTIONS[@]}")
+	   if [[ $_find == 0 ]]; then
+	         output=$(cat <( "${cmd1[@]}" 2>/dev/null && "${cmd2[@]}" 2>/dev/null) |
+            fzf --ansi \
+            --preview "timg -g70x30 -p h ${DIR}/{} 2>/dev/null" \
+            --preview-window '60%:noborder' \
+            "${mselect[@]}" \
+            "${FZF_OPTIONS[@]}")
+      else
+         output=$(cat <( "${cmd1[@]}" 2>/dev/null && "${cmd2[@]}" 2>/dev/null) |
+         sort -f |
+         fzf --ansi \
+         --preview "timg -g70x30 -p h ${DIR}{} 2>/dev/null" \
+         --preview-window '60%:noborder' \
+         "${mselect[@]}" \
+         "${FZF_OPTIONS[@]}")
+      fi
 
 	mselect=()
 
 	if [[ -z $output && -z $1 ]]; then
 		exit
-	elif [[ -n $1 ]] && [[ $1 != frompath ]]; then
-		return
 	else
 		_action
 	fi
 }
 
+_action (){
+	if [[ $output == *"options"* ]]; then
+      _show_options
+	elif [[ $output == *"-- set a perm"* ]]; then
+		_set_permanent_wallpaper
+	elif [[ $output == *"-- set random"* ]]; then
+		_set_random_wallpapers
+	elif [[ $output == *"-- hide"* ]]; then
+		_hide_wallpapers
+	elif [[ $output == *"-- explore"* ]]; then
+		_explore_home
+	else
+		file="$DIR$output"
+		[[ -f "$file" ]] &&
+			_set_wallpaper "$file"
+	fi
+}
+
+_show_options (){
+   _main_menu options
+}
+
 _set_wallpaper (){
-   feh --no-fehbg --bg-center "$1"
+   feh --no-fehbg --bg-scale "$1"
 }
 
 _set_permanent_wallpaper (){
-	_main_menu hide
+	_main_menu perm
 
-	[[ -n $output ]] &&
-		echo "$_path$output" > "$_path/.permanent_wallpaper" ||
+	if [[ -n $output ]]; then
+		echo "$WP_DIR$output" > "${WP_DIR}.permanent_wallpaper"
+   else
 		notify-send "No file selected" "Operation Cancelled"
+   fi
 
 	_main_menu
 }
 
 _set_random_wallpapers (){
+	echo '' > "${WP_DIR}.permanent_wallpaper"
 	notify-send "Boot randomization actived"
-	echo '' > "$_path/.permanent_wallpaper"
-	_main_menu
-}
-
-_show_hidden_wallpapers (){
-	mselect=(-m)
-	_main_menu show
-
-	# Transform output unto an array
-	mapfile -t output < <( echo "$output")
-
-	if [[ -n $output ]]; then
-		for file in "${output[@]}"; do
-			mv "$_path$file" "$_path${file#?}"
-		done
-	else
-		notify-send "No file selected" "Operation Cancelled"
-	fi
 
 	_main_menu
 }
 
-_hide_wallpaper (){
-	mselect=(-m)
+_hide_wallpapers (){
 	_main_menu hide
 
 	# Transform output unto an array
@@ -198,10 +175,12 @@ _hide_wallpaper (){
 
 	if [[ -n $output ]]; then
 		for file in "${output[@]}"; do
-			mv "$_path$file" "${_path}_${file}"
+         if [[ ${file:0:1} == "_" ]]; then
+   			mv "$WP_DIR$file" "$WP_DIR${file:1}"
+         else
+   			mv "$WP_DIR$file" "${WP_DIR}_$file"
+         fi
 		done
-	else
-		notify-send "No file selected" "Operation Cancelled"
 	fi
 
 	_main_menu
@@ -209,33 +188,19 @@ _hide_wallpaper (){
 
 _explore_home (){
 	_main_menu home
-	_main_menu frompath "${HOME}/$output/"
-}
 
-_action (){
-	if [[ ${output:0:1} == : ]]; then
-		if [[ $output == *"set a permanent"* ]]; then
-			_set_permanent_wallpaper
-		elif [[ $output == *"random boot wall"* ]]; then
-			_set_random_wallpapers
-		elif [[ $output == *"show hidden wall"* ]]; then
-			_show_hidden_wallpapers
-		elif [[ $output == *"hide wall"* ]]; then
-			_hide_wallpaper
-		elif [[ $output == *"xplore home directory"* ]]; then
-			_explore_home
-		fi
+   if [[ -n $output ]]; then
+      if [[ $_find == 0 ]]; then
+   	   _main_menu fromdir "${HOME}/$output/"
+	   else
+   	   _main_menu fromdir "$output/"
+	   fi
 	else
-		file="${_path}/$output"
-		[[ -f "$file" ]] &&
-			_set_wallpaper "$file"
+	   _main_menu
 	fi
 }
 
-#::::::::::::::::::::: SCRIPT :::::::::::::::::::::::::::::::::::::
+### SCRIPT ###
 
-trap finalise EXIT
-
-init=1
-_wallpapers_path
+_chk_wp_dir "$1"
 _main_menu
