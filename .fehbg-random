@@ -1,0 +1,51 @@
+#!/bin/bash
+#=======================================================
+# MADE BY twix (https://github.com/Twix53791)
+#
+# Random wallpaper at system startup.
+#
+# DEPENDENCIES:
+#     feh         (https://github.com/derf/feh)
+#
+#=======================================================
+
+WP_DIR="$HOME/.config/bspwm/wallpapers/"
+
+#=======================================================
+
+[[ ${WP_DIR: -1} != "/" ]] && WP_DIR="${WP_DIR}/"
+perm=$(< "${WP_DIR}.permanent_wallpaper")
+
+if [[ -n $perm && -f $WP_DIR$perm ]]; then
+	wallpaper="$perm"
+else
+	mapfile -t wallpapers < <( \
+			find "$WP_DIR" -maxdepth 1 -mindepth 1 -type f \( \
+			! -iname "_*" \
+			! -iname ".*" \) )
+
+	max=${#wallpapers[@]}
+	n=$(( $RANDOM % $max ))
+
+   wallpaper="${wallpapers[$n]}"
+fi
+
+feh --no-fehbg --bg-scale "$wallpaper"
+
+
+#########################################################
+#### POSIX COMPATIBLE ###################################
+#########################################################
+#!/bin/sh
+
+#time=$(awk 'BEGIN{srand();print srand()}')
+#i=1
+#while [ $i -le ${#nfiles} ]; do
+#	nless="${nless}?"
+#	i=$((i+1))
+#done
+#
+#less=${time%$nless}
+#random=${time#"$less"}
+#random=$(echo "$random" | awk '{sub(/^0*/,"");}1')
+#n=$((random%nfiles))
